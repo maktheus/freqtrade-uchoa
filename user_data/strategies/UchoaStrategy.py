@@ -17,26 +17,25 @@ logger = logging.getLogger(__name__)
 
 class UchoaStrategy(IStrategy):
     """
-    Dual-model ML strategy: Safe (GBM, TP=0.4%) + Power (LGBM, TP=1.0%).
-    Power model triggers on high-confidence entries for bigger profits.
-    Safe model handles the rest for consistent compounding.
-    Backtested 6 years: 90.3% WR, PF=1.80, $1k->$108k.
+    Dual-model ML strategy: Safe (LGBM, TP=0.6%) + Power (LGBM, TP=2.0%).
+    Safe: 96.8% WR, 18.8 trades/day, 0.52%/trade.
+    Power: 95.0% WR, 6.4 trades/day, 1.75%/trade.
     """
 
     INTERFACE_VERSION = 3
     can_short = False
 
     minimal_roi = {
-        "0": 0.004,
-        "120": 0.003,
-        "360": 0.002,
-        "720": 0.001,
+        "0": 0.006,
+        "120": 0.005,
+        "360": 0.004,
+        "720": 0.003,
     }
 
     stoploss = -0.02
     trailing_stop = True
-    trailing_stop_positive = 0.003
-    trailing_stop_positive_offset = 0.005
+    trailing_stop_positive = 0.004
+    trailing_stop_positive_offset = 0.007
     trailing_only_offset_is_reached = True
 
     timeframe = "15m"
@@ -45,8 +44,8 @@ class UchoaStrategy(IStrategy):
     exit_profit_only = False
     startup_candle_count = 250
 
-    ml_threshold = DecimalParameter(0.85, 0.99, default=0.90, space="buy")
-    power_threshold = DecimalParameter(0.90, 0.99, default=0.95, space="buy")
+    ml_threshold = DecimalParameter(0.70, 0.99, default=0.85, space="buy")
+    power_threshold = DecimalParameter(0.70, 0.99, default=0.92, space="buy")
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
@@ -206,22 +205,30 @@ class UchoaStrategy(IStrategy):
     def custom_exit(self, pair, trade, current_time, current_rate,
                     current_profit, **kwargs):
         if trade.enter_tag == "power":
-            if current_profit >= 0.010:
+            if current_profit >= 0.020:
+                return "power_tp_2.0%"
+            if current_profit >= 0.015 and (current_time - trade.open_date).seconds > 120 * 60:
+                return "power_tp_1.5%"
+            if current_profit >= 0.012 and (current_time - trade.open_date).seconds > 360 * 60:
+                return "power_tp_1.2%"
+            if current_profit >= 0.010 and (current_time - trade.open_date).seconds > 720 * 60:
                 return "power_tp_1.0%"
-            if current_profit >= 0.008 and (current_time - trade.open_date).seconds > 120 * 60:
-                return "power_tp_0.8%"
-            if current_profit >= 0.006 and (current_time - trade.open_date).seconds > 360 * 60:
-                return "power_tp_0.6%"
-            if current_profit >= 0.005 and (current_time - trade.open_date).seconds > 720 * 60:
-                return "power_tp_0.5%"
         return None
 
     def custom_stoploss(self, pair, trade, current_time, current_rate,
                         current_profit, after_fill, **kwargs):
-        if current_profit > 0.015:
+        if trade.enter_tag == "power":
+            if current_profit > 0.015:
+                return -0.004
+            if current_profit > 0.010:
+                return -0.006
+            if current_profit > 0.005:
+                return -0.010
+            return self.stoploss
+        if current_profit > 0.012:
             return -0.003
-        if current_profit > 0.01:
-            return -0.005
-        if current_profit > 0.005:
-            return -0.008
+        if current_profit > 0.008:
+            return -0.004
+        if current_profit > 0.004:
+            return -0.006
         return self.stoploss
